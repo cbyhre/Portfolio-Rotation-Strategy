@@ -9,269 +9,135 @@ st.set_page_config(layout="wide", page_title="Roth Conversion Optimizer")
 salary = st.number_input("Current Salary ($)", value=100000, step=1000)
 retirement_age = st.number_input("Expected Retirement Age", value=65, step=1)
 start_age = st.number_input("Current Age", value=40, step=1)
-CAGR = st.number_input("Annual Return or CAGR (%)", value=10.0, step=0.1) / 100
+CAGR = st.number_input("Annual Return or CAGR (%)", value=0.1, step=0.01, format="%.2f")
 initial_capital = st.number_input("Current 401k Capital ($)", value=1_000_000, step=10000)
-withdrawal_pct = st.number_input("Annual Living Expense Withdrawal (% in Retirement)", value=4.0, step=0.1) / 100
-annual_contribution_pct = st.number_input("Annual 401k Contribution (% of salary)", value=10.0, step=0.1) / 100
-employer_match_pct = st.number_input("Employer Match (% of salary)", value=5.0, step=0.1) / 100
+annual_withdrawal_pct = st.number_input("Annual Living Expense Withdrawal (% of Retirement Balance)", value=0.03, step=0.01, format="%.2f")
 
 # === Fixed Parameters ===
 salary_growth = 0.03
 end_age = 100
 inflation = 0.025
-cap_gains_rate = 0  # Illinois has no state tax on conversions/distributions
-IRS_401k_limit_start = 23500  # Starting IRS contribution limit
-
-# === Assumptions Box ===
-st.markdown(f"""
-### Assumptions Used in This Model:
-- **Inflation Rate:** {inflation*100:.2f}% per year
-- **Salary Growth Rate:** {salary_growth*100:.2f}% per year until retirement
-- **CAGR (Investment Growth):** {CAGR*100:.2f}%
-- **Living Expense Withdrawal:** {withdrawal_pct*100:.2f}% of total capital per year during retirement
-- **Employee 401k Contribution:** {annual_contribution_pct*100:.2f}% of salary (capped at ${IRS_401k_limit_start:,.0f} plus inflation)
-- **Employer Match:** {employer_match_pct*100:.2f}% of salary
-- **Capital Gains Tax Rate on Brokerage:** {cap_gains_rate*100:.2f}%
-- **Rules:** Uses current 401k withdrawal rules and RMD schedule
-- **Taxes:** Federal tax brackets are adjusted annually for inflation
-- **State Taxes:** Illinois exempts qualified retirement plan distributions and conversions from state tax
-""")
-
-# === RMD Table ===
-Withdrawl_Minimums = pd.DataFrame({
-    "Age": list(range(73, 101)),
-    "IRS Factor": [26.5, 25.5, 24.6, 23.7, 22.9, 22.0, 21.1, 20.2, 19.4, 18.5, 17.7, 16.8, 16.0, 15.2, 14.4, 13.7, 12.9, 12.2, 11.5, 10.8, 10.1, 9.5, 8.9, 8.4, 7.8, 7.3, 6.8, 6.4],
-    "% of Account You Must Withdraw": [3.77, 3.92, 4.07, 4.22, 4.37, 4.55, 4.74, 4.95, 5.15, 5.41, 5.65, 5.95, 6.25, 6.58, 6.94, 7.30, 7.75, 8.20, 8.70, 9.26, 9.90, 10.53, 11.24, 11.90, 12.82, 13.70, 14.71, 15.63]
+cap_gains_rate = 0
+federal_tax_brackets = [
+    (0, 0.10), (11000, 0.12), (44725, 0.22), (95375, 0.24),
+    (182100, 0.32), (231250, 0.35), (578125, 0.37)
+]
+rmd_table = pd.DataFrame({
+    "Age": [73,74,75,76,77,78,79,80,81,82,83,84,85],
+    "Divisor": [26.5,25.5,24.6,23.7,22.9,22.0,21.1,20.2,19.4,18.5,17.7,16.8,16.0]
 })
 
-# === Tax Function ===
-def future_tax_rate(income, year_offset):
-    factor = (1 + inflation) ** year_offset
-    brackets = [
-        {"rate": 0.10, "start": 0 * factor, "end": 41300 * factor},
-        {"rate": 0.12, "start": 41300 * factor, "end": 167900 * factor},
-        {"rate": 0.22, "start": 167900 * factor, "end": 358300 * factor},
-        {"rate": 0.24, "start": 358300 * factor, "end": 683300 * factor},
-        {"rate": 0.32, "start": 683300 * factor, "end": 867600 * factor},
-        {"rate": 0.35, "start": 867600 * factor, "end": 1302800 * factor},
-        {"rate": 0.37, "start": 1302800 * factor, "end": float("inf")}
-    ]
-    tax = 0
-    remaining_income = income
-    for bracket in brackets:
-        if income > bracket["start"]:
-            taxable_amount = min(remaining_income, bracket["end"] - bracket["start"])
-            tax += taxable_amount * bracket["rate"]
-            remaining_income -= taxable_amount
-        else:
-            break
-    return tax / income if income > 0 else 0
+annual_contribution_pct = 0.05  # % of salary
+employer_match_pct = 0.03
 
-# === Simulation ===
-def run_sim(conversion_age_start, annual_conversion, return_balances=False):
-    ages = list(range(start_age, end_age + 1))
+# === Helper Functions ===
+def get_federal_tax_rate(income, age):
+    # Adjust brackets for inflation
+    years_since_start = age - start_age
+    inflation_factor = (1 + inflation) ** years_since_start
+    adj_brackets = [(b[0] * inflation_factor, b[1]) for b in federal_tax_brackets]
+
+    tax = 0
+    for i, (bracket, rate) in enumerate(adj_brackets):
+        if i == len(adj_brackets) - 1 or income <= adj_brackets[i + 1][0]:
+            tax += (income - bracket) * rate
+            break
+        else:
+            next_bracket = adj_brackets[i + 1][0]
+            tax += (next_bracket - bracket) * rate
+    return max(tax, 0)
+
+def get_rmd_divisor(age):
+    if age in rmd_table["Age"].values:
+        return rmd_table.loc[rmd_table["Age"] == age, "Divisor"].values[0]
+    elif age > rmd_table["Age"].max():
+        return max(rmd_table["Divisor"].iloc[-1] - (age - rmd_table["Age"].max()) * 0.9, 1)
+    return None
+
+# === Simulation Function ===
+def run_sim(conversion_start_age):
     capital_401k = initial_capital
     capital_roth = 0
     capital_brokerage = 0
     current_salary = salary
-    balances = []
-    withdrawals = []
-    employee_contribs = []
 
-    for age in ages:
-        # Contributions before growth if still working
+    results = []
+    
+    for age in range(start_age, end_age + 1):
+        # === 1. Salary growth ===
+        if age > start_age:
+            current_salary *= (1 + salary_growth)
+
+        # === 2. Contributions (before retirement only) ===
         if age < retirement_age:
-            # IRS contribution limit adjusted for inflation
-            years_since_start = age - start_age
-            contribution_limit = IRS_401k_limit_start * (1 + inflation) ** years_since_start
-
-            # Employee contribution capped by IRS limit
+            contribution_limit = 23500 * (1 + inflation) ** (age - start_age)
             raw_employee_contribution = current_salary * annual_contribution_pct
             employee_contribution = min(raw_employee_contribution, contribution_limit)
-
-            # Employer match (not capped)
             employer_match = current_salary * employer_match_pct
-
-            # Add to 401k
             capital_401k += employee_contribution + employer_match
         else:
             employee_contribution = 0
 
-        employee_contribs.append(employee_contribution)
-
-        # Living expenses withdrawal during retirement
+        # === 3. Living Expense Withdrawals ===
+        living_expense_withdrawal = 0
         if age >= retirement_age:
-            total_capital = capital_401k + capital_roth + capital_brokerage
-            living_expense = total_capital * withdrawal_pct
-            if capital_brokerage >= living_expense:
-                capital_brokerage -= living_expense
-            elif capital_brokerage + capital_roth >= living_expense:
-                from_roth = living_expense - capital_brokerage
-                capital_brokerage = 0
-                capital_roth -= from_roth
-            else:
-                from_401k = living_expense - (capital_brokerage + capital_roth)
-                capital_brokerage = 0
-                capital_roth = 0
-                tax_rate = future_tax_rate(from_401k, age - start_age)
-                capital_401k -= from_401k / (1 - tax_rate)
-            withdrawals.append(living_expense)
-        else:
-            withdrawals.append(0)
+            living_expense_withdrawal = capital_401k * annual_withdrawal_pct
+            capital_401k -= living_expense_withdrawal  # before taxes
+            tax_due = get_federal_tax_rate(living_expense_withdrawal, age)
+            capital_401k -= tax_due
+            capital_brokerage += (living_expense_withdrawal - tax_due)
 
-        # Conversion logic
-        if age < conversion_age_start:
-            capital_401k *= (1 + CAGR)
-            capital_roth *= (1 + CAGR)
-            capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
-            if age < retirement_age:
-                current_salary *= (1 + salary_growth)
-
-        elif age < 73:
-            taxable_income = (current_salary if age < retirement_age else 0) - employee_contribution + annual_conversion
-            conversion_amount = min(annual_conversion, capital_401k)
-            tax_rate = future_tax_rate(taxable_income, age - start_age)
-            tax_due = conversion_amount * tax_rate
+        # === 4. Roth Conversions ===
+        if conversion_start_age <= age < 73 and capital_401k > 0:
+            conversion_amount = capital_401k * 0.20
+            tax_due = get_federal_tax_rate(conversion_amount, age)
             capital_401k -= conversion_amount
-            capital_roth += conversion_amount
-            if capital_brokerage >= tax_due:
-                capital_brokerage -= tax_due
-            else:
-                remaining_tax = tax_due - capital_brokerage
-                capital_brokerage = 0
-                capital_401k -= remaining_tax
-            capital_401k *= (1 + CAGR)
-            capital_roth *= (1 + CAGR)
-            capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
-            if age < retirement_age:
-                current_salary *= (1 + salary_growth)
+            capital_roth += conversion_amount - tax_due
+            capital_brokerage -= tax_due
 
-        else:
-            withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
-            if not withdraw_pct.empty and capital_401k > 0:
-                withdrawal = capital_401k * (withdraw_pct.values[0] / 100)
-                tax_rate = future_tax_rate(withdrawal, age - start_age)
-                after_tax_withdrawal = withdrawal * (1 - tax_rate)
-                capital_401k -= withdrawal
-                capital_brokerage += after_tax_withdrawal
-            capital_401k *= (1 + CAGR)
-            capital_roth *= (1 + CAGR)
-            capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
+        # === 5. RMDs ===
+        if age >= 73:
+            divisor = get_rmd_divisor(age)
+            if divisor and capital_401k > 0:
+                rmd_amount = capital_401k / divisor
+                tax_due = get_federal_tax_rate(rmd_amount, age)
+                capital_401k -= rmd_amount
+                capital_brokerage += (rmd_amount - tax_due)
 
-        if return_balances:
-            balances.append(capital_401k + capital_roth + capital_brokerage)
+        # === 6. Growth ===
+        capital_401k *= (1 + CAGR)
+        capital_roth *= (1 + CAGR)
+        capital_brokerage *= (1 + CAGR)
 
-    return (balances, withdrawals, employee_contribs) if return_balances else capital_401k + capital_roth + capital_brokerage
+        # === Save results ===
+        results.append({
+            "Age": age,
+            "401k Balance": capital_401k,
+            "Roth Balance": capital_roth,
+            "Brokerage Balance": capital_brokerage,
+            "Living Expense Withdrawals ($)": living_expense_withdrawal,
+            "Personal Contributions ($)": employee_contribution
+        })
+    
+    return pd.DataFrame(results)
 
-# === Never Convert ===
-def run_never():
-    ages = list(range(start_age, end_age + 1))
-    capital_401k_nc = initial_capital
-    capital_brokerage_nc = 0
-    current_salary = salary
-    balances_nc = []
-    withdrawals_nc = []
-    employee_contribs_nc = []
+# === Run and Display ===
+conversion_start_age = st.slider("Conversion Start Age", min_value=start_age, max_value=73, value=start_age)
+df = run_sim(conversion_start_age)
 
-    for age in ages:
-        if age < retirement_age:
-            years_since_start = age - start_age
-            contribution_limit = IRS_401k_limit_start * (1 + inflation) ** years_since_start
-            raw_employee_contribution = current_salary * annual_contribution_pct
-            employee_contribution = min(raw_employee_contribution, contribution_limit)
-            employer_match = current_salary * employer_match_pct
-            capital_401k_nc += employee_contribution + employer_match
-        else:
-            employee_contribution = 0
+# Format currency
+for col in ["401k Balance", "Roth Balance", "Brokerage Balance", "Living Expense Withdrawals ($)", "Personal Contributions ($)"]:
+    df[col] = df[col].apply(lambda x: f"${x:,.0f}")
 
-        employee_contribs_nc.append(employee_contribution)
-
-        if age >= retirement_age:
-            total_capital = capital_401k_nc + capital_brokerage_nc
-            living_expense = total_capital * withdrawal_pct
-            if capital_brokerage_nc >= living_expense:
-                capital_brokerage_nc -= living_expense
-            else:
-                from_401k = living_expense - capital_brokerage_nc
-                capital_brokerage_nc = 0
-                tax_rate = future_tax_rate(from_401k, age - start_age)
-                capital_401k_nc -= from_401k / (1 - tax_rate)
-            withdrawals_nc.append(living_expense)
-        else:
-            withdrawals_nc.append(0)
-
-        if age < 73:
-            capital_401k_nc *= (1 + CAGR)
-            capital_brokerage_nc *= (1 + CAGR * (1 - cap_gains_rate))
-            if age < retirement_age:
-                current_salary *= (1 + salary_growth)
-        else:
-            withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
-            if not withdraw_pct.empty and capital_401k_nc > 0:
-                withdrawal = capital_401k_nc * (withdraw_pct.values[0] / 100)
-                tax_rate = future_tax_rate(withdrawal, age - start_age)
-                after_tax_withdrawal = withdrawal * (1 - tax_rate)
-                capital_401k_nc -= withdrawal
-                capital_brokerage_nc += after_tax_withdrawal
-            capital_401k_nc *= (1 + CAGR)
-            capital_brokerage_nc *= (1 + CAGR * (1 - cap_gains_rate))
-
-        balances_nc.append(capital_401k_nc + capital_brokerage_nc)
-
-    return balances_nc, withdrawals_nc, employee_contribs_nc
-
-# === Grid Search ===
-results = []
-for conv_start in range(start_age, 73):
-    for conv_amount in range(0, 1_000_000, 10_000):
-        final_balance = run_sim(conv_start, conv_amount)
-        results.append((conv_start, conv_amount, final_balance))
-results_df = pd.DataFrame(results, columns=["Conversion Start Age", "Annual Conversion", "Final Balance"])
-results_df = results_df.sort_values(by="Final Balance", ascending=False).reset_index(drop=True)
-best_conv_start, best_conv_amount, best_final_balance = results_df.iloc[0]
-
-# === Balances for Plot & Table ===
-ages = list(range(start_age, end_age + 1))
-best_balances, best_withdrawals, best_contribs = run_sim(best_conv_start, best_conv_amount, return_balances=True)
-never_balances, never_withdrawals, never_contribs = run_never()
-spread_pct = [(b - n) / n * 100 if n != 0 else 0 for b, n in zip(best_balances, never_balances)]
-
-# === Display Results ===
-st.subheader("Optimal Strategy Instructions")
-st.markdown(f"**Start at age {best_conv_start}: Convert ${best_conv_amount:,.0f} per year into a Roth IRA.**")
-st.markdown(f"**Final Balance (Optimal Strategy):** ${best_final_balance:,.0f}")
-st.markdown(f"**Final Balance (Never Convert):** ${never_balances[-1]:,.0f}")
-st.markdown(f"**Advantage:** ${best_final_balance - never_balances[-1]:,.0f} (**{spread_pct[-1]:.2f}% higher**)")
+st.dataframe(df)
 
 # === Plot ===
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-ax1.plot(ages, best_balances, label=f"Optimal Conversion (Start {best_conv_start}, ${best_conv_amount:,}/yr)")
-ax1.plot(ages, never_balances, label="Never Convert")
-ax1.yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
-ax1.set_ylabel("Total Capital ($)")
-ax1.legend()
-ax1.grid(True)
-ax2.plot(ages, spread_pct, color="green", label="Spread % (Optimal vs Never)")
-ax2.axhline(0, color="black", linewidth=1, linestyle="--")
-ax2.yaxis.set_major_formatter(mtick.PercentFormatter())
-ax2.set_xlabel("Age")
-ax2.set_ylabel("Spread (%)")
-ax2.legend()
-ax2.grid(True)
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.plot(df["Age"], df["401k Balance"], label="401k")
+ax.plot(df["Age"], df["Roth Balance"], label="Roth")
+ax.plot(df["Age"], df["Brokerage Balance"], label="Brokerage")
+ax.yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
+ax.set_xlabel("Age")
+ax.set_ylabel("Balance ($)")
+ax.legend()
 st.pyplot(fig)
-
-# === Table ===
-comparison_df = pd.DataFrame({
-    "Age": ages,
-    "Conversion Total": best_balances,
-    "Conversion Living Expense Withdrawal": best_withdrawals,
-    "Conversion Employee Contribution": best_contribs,
-    "Non-Conversion Total": never_balances,
-    "Non-Conversion Living Expense Withdrawal": never_withdrawals,
-    "Non-Conversion Employee Contribution": never_contribs
-})
-for col in ["Conversion Total", "Conversion Living Expense Withdrawal", "Conversion Employee Contribution",
-            "Non-Conversion Total", "Non-Conversion Living Expense Withdrawal", "Non-Conversion Employee Contribution"]:
-    comparison_df[col] = comparison_df[col].apply(lambda x: f"${x:,.0f}")
-st.subheader("Yearly Comparison Table")
-st.dataframe(comparison_df)
