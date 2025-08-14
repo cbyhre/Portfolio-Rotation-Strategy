@@ -6,11 +6,11 @@ import matplotlib.ticker as mtick
 st.set_page_config(layout="wide", page_title="Roth Conversion Optimizer")
 
 # === User Inputs ===
-salary = st.number_input("Current Salary ($)", value=100000, step=1000)
+salary = st.number_input("Current Salary ($)", value=100000, step=1000, format="%.0f")
 retirement_age = st.number_input("Expected Retirement Age", value=65, step=1)
 start_age = st.number_input("Current Age", value=40, step=1)
 CAGR = st.number_input("Annual Investment CAGR (write 0.1 for 10% Annual Return)", value=0.1, step=0.01, format="%.2f")
-initial_capital = st.number_input("Current 401k Capital ($)", value=1_000_000, step=10000)
+initial_capital = st.number_input("Current 401k Capital ($)", value=1_000_000, step=10000, format="%.0f")
 
 # === Fixed Parameters ===
 salary_growth = 0.03
@@ -55,7 +55,7 @@ def future_tax_rate(income, year_offset):
     return tax / income if income > 0 else 0
 
 # === Simulation ===
-def run_sim(conversion_age_start, annual_conversion, return_balances=False):
+def run_sim(conversion_age_start, annual_conversion_pct, return_balances=False):
     ages = list(range(start_age, end_age + 1))
     capital_401k = initial_capital
     capital_roth = 0
@@ -65,6 +65,7 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
 
     for age in ages:
         if age < conversion_age_start:
+            # No conversions yet
             capital_401k *= (1 + CAGR)
             capital_roth *= (1 + CAGR)
             capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
@@ -72,14 +73,16 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
                 current_salary *= (1 + salary_growth)
 
         elif age < 73:
-            taxable_income = (current_salary if age < retirement_age else 0) + annual_conversion
-            conversion_amount = min(annual_conversion, capital_401k)
+            # Convert a percentage of 401k balance
+            conversion_amount = capital_401k * annual_conversion_pct
+            taxable_income = (current_salary if age < retirement_age else 0) + conversion_amount
             tax_rate = future_tax_rate(taxable_income, age - start_age)
             tax_due = conversion_amount * tax_rate
 
             capital_401k -= conversion_amount
             capital_roth += conversion_amount
 
+            # Pay taxes from brokerage, else reduce 401k
             if capital_brokerage >= tax_due:
                 capital_brokerage -= tax_due
             else:
@@ -87,6 +90,7 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
                 capital_brokerage = 0
                 capital_401k -= remaining_tax
 
+            # Growth
             capital_401k *= (1 + CAGR)
             capital_roth *= (1 + CAGR)
             capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
@@ -95,6 +99,7 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
                 current_salary *= (1 + salary_growth)
 
         else:
+            # RMD withdrawals
             withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
             if not withdraw_pct.empty and capital_401k > 0:
                 withdrawal = capital_401k * (withdraw_pct.values[0] / 100)
@@ -141,31 +146,31 @@ def run_never():
 # === Grid Search ===
 results = []
 for conv_start in range(start_age, 73):
-    for conv_amount in range(0, 1_000_000, 10_000):
-        final_balance = run_sim(conv_start, conv_amount)
-        results.append((conv_start, conv_amount, final_balance))
+    for conv_pct in [x / 100 for x in range(0, 101, 1)]:  # 0% to 100%
+        final_balance = run_sim(conv_start, conv_pct)
+        results.append((conv_start, conv_pct, final_balance))
 
-results_df = pd.DataFrame(results, columns=["Conversion Start Age", "Annual Conversion", "Final Balance"])
+results_df = pd.DataFrame(results, columns=["Conversion Start Age", "Annual Conversion %", "Final Balance"])
 results_df = results_df.sort_values(by="Final Balance", ascending=False).reset_index(drop=True)
 
-best_conv_start, best_conv_amount, best_final_balance = results_df.iloc[0]
+best_conv_start, best_conv_pct, best_final_balance = results_df.iloc[0]
 
 # === Balances for Plot ===
 ages = list(range(start_age, end_age + 1))
-best_balances = run_sim(best_conv_start, best_conv_amount, return_balances=True)
+best_balances = run_sim(best_conv_start, best_conv_pct, return_balances=True)
 never_balances = run_never()
 spread_pct = [(b - n) / n * 100 if n != 0 else 0 for b, n in zip(best_balances, never_balances)]
 
 # === Display Results ===
 st.subheader("Optimal Strategy Instructions")
-st.markdown(f"✅ **Start at age {best_conv_start}: Convert ${best_conv_amount:,.0f} per year into a Roth IRA.**")
+st.markdown(f"✅ **Start at age {best_conv_start}: Convert {best_conv_pct:.1%} of your 401k each year into a Roth IRA.**")
 st.markdown(f"💰 **Final Balance (Optimal Strategy):** ${best_final_balance:,.0f}")
 st.markdown(f"🚫 **Final Balance (Never Convert):** ${never_balances[-1]:,.0f}")
 st.markdown(f"📈 **Advantage:** ${best_final_balance - never_balances[-1]:,.0f} (**{spread_pct[-1]:.2f}% higher**)")
 
 # === Plot ===
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-ax1.plot(ages, best_balances, label=f"Optimal Conversion (Start {best_conv_start}, ${best_conv_amount:,}/yr)")
+ax1.plot(ages, best_balances, label=f"Optimal Conversion (Start {best_conv_start}, {best_conv_pct:.1%}/yr)")
 ax1.plot(ages, never_balances, label="Never Convert")
 ax1.yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
 ax1.set_ylabel("Total Capital ($)")
