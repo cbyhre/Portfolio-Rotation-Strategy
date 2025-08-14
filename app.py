@@ -9,7 +9,7 @@ st.set_page_config(layout="wide", page_title="Roth Conversion Optimizer")
 salary = st.number_input("Current Salary ($)", value=100000, step=1000)
 retirement_age = st.number_input("Expected Retirement Age", value=65, step=1)
 start_age = st.number_input("Current Age", value=40, step=1)
-CAGR = st.number_input("Annual Investment CAGR (write 0.1 for 10% Annual Return", value=0.1, step=0.01, format="%.2f")
+CAGR = st.number_input("Annual Investment CAGR (write 0.1 for 10% Annual Return)", value=0.1, step=0.01, format="%.2f")
 initial_capital = st.number_input("Current 401k Capital ($)", value=1_000_000, step=10000)
 
 # === Fixed Parameters ===
@@ -157,22 +157,22 @@ never_balances = run_never()
 spread_pct = [(b - n) / n * 100 if n != 0 else 0 for b, n in zip(best_balances, never_balances)]
 
 # === Display Results ===
-st.subheader("Optimal Strategy")
-st.markdown(f"**At age {best_conv_start}, start converting ${best_conv_amount:,.0f} per year into a Roth IRA.**")
-st.markdown(f"Final Balance (Best): **${best_final_balance:,.0f}**")
-st.markdown(f"Final Balance (Never Convert): **${never_balances[-1]:,.0f}**")
-st.markdown(f"Difference: **${best_final_balance - never_balances[-1]:,.0f} ({spread_pct[-1]:.2f}%)**")
+st.subheader("Optimal Strategy Instructions")
+st.markdown(f"✅ **Start at age {best_conv_start}: Convert ${best_conv_amount:,.0f} per year into a Roth IRA.**")
+st.markdown(f"💰 **Final Balance (Optimal Strategy):** ${best_final_balance:,.0f}")
+st.markdown(f"🚫 **Final Balance (Never Convert):** ${never_balances[-1]:,.0f}")
+st.markdown(f"📈 **Advantage:** ${best_final_balance - never_balances[-1]:,.0f} (**{spread_pct[-1]:.2f}% higher**)")
 
 # === Plot ===
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-ax1.plot(ages, best_balances, label=f"Best Conversion (Start {best_conv_start}, ${best_conv_amount:,}/yr)")
+ax1.plot(ages, best_balances, label=f"Optimal Conversion (Start {best_conv_start}, ${best_conv_amount:,}/yr)")
 ax1.plot(ages, never_balances, label="Never Convert")
 ax1.yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
 ax1.set_ylabel("Total Capital ($)")
 ax1.legend()
 ax1.grid(True)
 
-ax2.plot(ages, spread_pct, color="green", label="Spread % (Best vs Never)")
+ax2.plot(ages, spread_pct, color="green", label="Spread % (Optimal vs Never)")
 ax2.axhline(0, color="black", linewidth=1, linestyle="--")
 ax2.yaxis.set_major_formatter(mtick.PercentFormatter())
 ax2.set_xlabel("Age")
