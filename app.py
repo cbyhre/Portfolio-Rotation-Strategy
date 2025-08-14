@@ -20,6 +20,7 @@ salary_growth = 0.03
 end_age = 100
 inflation = 0.025
 cap_gains_rate = 0  # Illinois has no state tax on conversions/distributions
+IRS_401k_limit_start = 23500  # Starting IRS contribution limit
 
 # === Assumptions Box ===
 st.markdown(f"""
@@ -28,7 +29,7 @@ st.markdown(f"""
 - **Salary Growth Rate:** {salary_growth*100:.2f}% per year until retirement
 - **CAGR (Investment Growth):** {CAGR*100:.2f}%
 - **Living Expense Withdrawal:** {withdrawal_pct*100:.2f}% of total capital per year during retirement
-- **Employee 401k Contribution:** {annual_contribution_pct*100:.2f}% of salary
+- **Employee 401k Contribution:** {annual_contribution_pct*100:.2f}% of salary (capped at ${IRS_401k_limit_start:,.0f} plus inflation)
 - **Employer Match:** {employer_match_pct*100:.2f}% of salary
 - **Capital Gains Tax Rate on Brokerage:** {cap_gains_rate*100:.2f}%
 - **Rules:** Uses current 401k withdrawal rules and RMD schedule
@@ -75,15 +76,28 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
     current_salary = salary
     balances = []
     withdrawals = []
+    employee_contribs = []
 
     for age in ages:
         # Contributions before growth if still working
         if age < retirement_age:
-            employee_contribution = current_salary * annual_contribution_pct
+            # IRS contribution limit adjusted for inflation
+            years_since_start = age - start_age
+            contribution_limit = IRS_401k_limit_start * (1 + inflation) ** years_since_start
+
+            # Employee contribution capped by IRS limit
+            raw_employee_contribution = current_salary * annual_contribution_pct
+            employee_contribution = min(raw_employee_contribution, contribution_limit)
+
+            # Employer match (not capped)
             employer_match = current_salary * employer_match_pct
+
+            # Add to 401k
             capital_401k += employee_contribution + employer_match
         else:
             employee_contribution = 0
+
+        employee_contribs.append(employee_contribution)
 
         # Living expenses withdrawal during retirement
         if age >= retirement_age:
@@ -105,7 +119,7 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
         else:
             withdrawals.append(0)
 
-        # Pre-73 conversion years
+        # Conversion logic
         if age < conversion_age_start:
             capital_401k *= (1 + CAGR)
             capital_roth *= (1 + CAGR)
@@ -147,7 +161,7 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
         if return_balances:
             balances.append(capital_401k + capital_roth + capital_brokerage)
 
-    return (balances, withdrawals) if return_balances else capital_401k + capital_roth + capital_brokerage
+    return (balances, withdrawals, employee_contribs) if return_balances else capital_401k + capital_roth + capital_brokerage
 
 # === Never Convert ===
 def run_never():
@@ -157,13 +171,20 @@ def run_never():
     current_salary = salary
     balances_nc = []
     withdrawals_nc = []
+    employee_contribs_nc = []
+
     for age in ages:
         if age < retirement_age:
-            employee_contribution = current_salary * annual_contribution_pct
+            years_since_start = age - start_age
+            contribution_limit = IRS_401k_limit_start * (1 + inflation) ** years_since_start
+            raw_employee_contribution = current_salary * annual_contribution_pct
+            employee_contribution = min(raw_employee_contribution, contribution_limit)
             employer_match = current_salary * employer_match_pct
             capital_401k_nc += employee_contribution + employer_match
         else:
             employee_contribution = 0
+
+        employee_contribs_nc.append(employee_contribution)
 
         if age >= retirement_age:
             total_capital = capital_401k_nc + capital_brokerage_nc
@@ -196,7 +217,8 @@ def run_never():
             capital_brokerage_nc *= (1 + CAGR * (1 - cap_gains_rate))
 
         balances_nc.append(capital_401k_nc + capital_brokerage_nc)
-    return balances_nc, withdrawals_nc
+
+    return balances_nc, withdrawals_nc, employee_contribs_nc
 
 # === Grid Search ===
 results = []
@@ -210,8 +232,8 @@ best_conv_start, best_conv_amount, best_final_balance = results_df.iloc[0]
 
 # === Balances for Plot & Table ===
 ages = list(range(start_age, end_age + 1))
-best_balances, best_withdrawals = run_sim(best_conv_start, best_conv_amount, return_balances=True)
-never_balances, never_withdrawals = run_never()
+best_balances, best_withdrawals, best_contribs = run_sim(best_conv_start, best_conv_amount, return_balances=True)
+never_balances, never_withdrawals, never_contribs = run_never()
 spread_pct = [(b - n) / n * 100 if n != 0 else 0 for b, n in zip(best_balances, never_balances)]
 
 # === Display Results ===
@@ -243,11 +265,13 @@ comparison_df = pd.DataFrame({
     "Age": ages,
     "Conversion Total": best_balances,
     "Conversion Living Expense Withdrawal": best_withdrawals,
+    "Conversion Employee Contribution": best_contribs,
     "Non-Conversion Total": never_balances,
-    "Non-Conversion Living Expense Withdrawal": never_withdrawals
+    "Non-Conversion Living Expense Withdrawal": never_withdrawals,
+    "Non-Conversion Employee Contribution": never_contribs
 })
-for col in ["Conversion Total", "Conversion Living Expense Withdrawal",
-            "Non-Conversion Total", "Non-Conversion Living Expense Withdrawal"]:
+for col in ["Conversion Total", "Conversion Living Expense Withdrawal", "Conversion Employee Contribution",
+            "Non-Conversion Total", "Non-Conversion Living Expense Withdrawal", "Non-Conversion Employee Contribution"]:
     comparison_df[col] = comparison_df[col].apply(lambda x: f"${x:,.0f}")
 st.subheader("Yearly Comparison Table")
 st.dataframe(comparison_df)
