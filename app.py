@@ -28,7 +28,7 @@ st.markdown(f"""
 - **Inflation Rate:** {inflation*100:.2f}% per year
 - **Salary Growth Rate:** {salary_growth*100:.2f}% per year until retirement
 - **CAGR (Investment Growth):** {CAGR*100:.2f}%
-- **Living Expense Withdrawal:** {withdrawal_pct*100:.2f}% of total capital per year during retirement
+- **Living Expense Withdrawal:** {withdrawal_pct*100:.2f}% of total capital in first retirement year, then grows with inflation
 - **Employee 401k Contribution:** {annual_contribution_pct*100:.2f}% of salary (capped at ${IRS_401k_limit_start:,.0f} plus inflation)
 - **Employer Match:** {employer_match_pct*100:.2f}% of salary
 - **Capital Gains Tax Rate on Brokerage:** {cap_gains_rate*100:.2f}%
@@ -75,6 +75,7 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
     capital_brokerage = 0
     current_salary = salary
     balances, withdrawals, employee_contribs = [], [], []
+    base_withdraw_amount = None  # first-year retirement withdrawal
 
     for age in ages:
         # 1. Contributions
@@ -88,10 +89,12 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
             employee_contribution = 0
         employee_contribs.append(employee_contribution)
 
-        # 2. Withdrawals for living expenses
-        if age >= retirement_age and withdrawal_pct > 0:
-            total_capital = capital_401k + capital_roth + capital_brokerage
-            living_expense = total_capital * withdrawal_pct
+        # 2. Withdrawals for living expenses (inflation-adjusted)
+        if age == retirement_age:
+            base_withdraw_amount = (capital_401k + capital_roth + capital_brokerage) * withdrawal_pct
+        if age >= retirement_age and base_withdraw_amount:
+            years_since_retire = age - retirement_age
+            living_expense = base_withdraw_amount * ((1 + inflation) ** years_since_retire)
             if capital_brokerage >= living_expense:
                 capital_brokerage -= living_expense
             elif capital_brokerage + capital_roth >= living_expense:
@@ -152,6 +155,7 @@ def run_never():
     capital_brokerage = 0
     current_salary = salary
     balances, withdrawals, employee_contribs = [], [], []
+    base_withdraw_amount = None
 
     for age in ages:
         # 1. Contributions
@@ -165,10 +169,12 @@ def run_never():
             employee_contribution = 0
         employee_contribs.append(employee_contribution)
 
-        # 2. Withdrawals for living expenses
-        if age >= retirement_age and withdrawal_pct > 0:
-            total_capital = capital_401k + capital_brokerage
-            living_expense = total_capital * withdrawal_pct
+        # 2. Withdrawals for living expenses (inflation-adjusted)
+        if age == retirement_age:
+            base_withdraw_amount = (capital_401k + capital_brokerage) * withdrawal_pct
+        if age >= retirement_age and base_withdraw_amount:
+            years_since_retire = age - retirement_age
+            living_expense = base_withdraw_amount * ((1 + inflation) ** years_since_retire)
             if capital_brokerage >= living_expense:
                 capital_brokerage -= living_expense
             else:
