@@ -211,7 +211,7 @@ comparison_df = pd.DataFrame({
 })
 
 # Format dollar columns for readability
-for col in ["Conversion Total", "Conversion Withdrawal", "Non-Conversion Total", "Non-Conversion Withdrawal"]:
+for col in ["With-Conversion Balance", "Living Expense Withdrawal", "Never-Convert Balance", "Living Expense Withdrawal"]:
     comparison_df[col] = comparison_df[col].apply(lambda x: f"${x:,.0f}")
 
 st.subheader("Yearly Comparison Table")
