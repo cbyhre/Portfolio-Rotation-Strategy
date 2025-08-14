@@ -11,7 +11,7 @@ retirement_age = st.number_input("Expected Retirement Age", value=65, step=1)
 start_age = st.number_input("Current Age", value=40, step=1)
 CAGR = st.number_input("Annual Return or CAGR (%)", value=10.0, step=0.1) / 100
 initial_capital = st.number_input("Current 401k Capital ($)", value=1_000_000, step=10000)
-withdrawal_pct = st.number_input("Annual Living Expense Withdrawal (% in Retirement)", value=4.0, step=0.1) / 100
+withdrawal_pct = st.number_input("Annual Living Expense Withdrawal (% in Retirement)", value=2.0, step=0.1) / 100
 annual_contribution_pct = st.number_input("Annual 401k Contribution (% of salary)", value=10.0, step=0.1) / 100
 employer_match_pct = st.number_input("Employer Match (% of salary)", value=5.0, step=0.1) / 100
 
