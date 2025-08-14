@@ -4,6 +4,17 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 
 st.set_page_config(layout="wide", page_title="Roth Conversion Optimizer")
+st.markdown("""
+### Assumptions Used in This Model:
+- **Inflation Rate:** {:.2f}% per year
+- **Salary Growth Rate:** {:.2f}% per year until retirement
+- **CAGR (Investment Growth):** {:.2f}%
+- **Living Expense Withdrawal:** {:.2f}% of total capital per year during retirement
+- **Capital Gains Tax Rate:** {:.2f}%
+- **Rules:** Uses current 401k withdrawal rules and RMD schedule
+- **Taxes:** Federal tax brackets are adjusted annually for inflation
+""".format(inflation * 100, salary_growth * 100, CAGR * 100, withdrawal_pct * 100, cap_gains_rate * 100))
+
 
 # === User Inputs ===
 salary = st.number_input("Current Salary ($)", value=100000, step=1000)
