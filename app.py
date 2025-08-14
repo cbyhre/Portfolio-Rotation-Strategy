@@ -9,7 +9,7 @@ st.set_page_config(layout="wide", page_title="Roth Conversion Optimizer")
 salary = st.number_input("Current Salary ($)", value=100000, step=1000)
 retirement_age = st.number_input("Expected Retirement Age", value=65, step=1)
 start_age = st.number_input("Current Age", value=40, step=1)
-CAGR = st.number_input("Annual Investment CAGR (write 0.1 for 10% Annual Return)", value=0.1, step=0.01, format="%.2f")
+CAGR = st.number_input("Annual Investment CAGR (%)", value=10.0, step=0.1) / 100
 initial_capital = st.number_input("Current 401k Capital ($)", value=1_000_000, step=10000)
 withdrawal_pct = st.number_input("Annual Living Expense Withdrawal (% of total capital during retirement)", value=4.0, step=0.1) / 100
 
