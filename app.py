@@ -22,7 +22,7 @@ cap_gains_rate = 0
 # === Assumptions Box ===
 st.markdown("""
 ### Assumptions Used in This Model:
-- **No Contributions:** {:.2f}% This does not include additional contributions, the salary is just used to find the appropriate tax rate.
+- **No Contributions:** This does not include additional contributions, the salary is just used to find the appropriate tax rate.
 - **Inflation Rate:** {:.2f}% per year
 - **Salary Growth Rate:** {:.2f}% per year until retirement
 - **Rules:** Uses current 401k withdrawal rules and RMD schedule
