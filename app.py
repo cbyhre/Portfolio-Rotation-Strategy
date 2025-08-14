@@ -24,11 +24,10 @@ st.markdown("""
 ### Assumptions Used in This Model:
 - **Inflation Rate:** {:.2f}% per year
 - **Salary Growth Rate:** {:.2f}% per year until retirement
-- **CAGR (Investment Growth):** {:.2f}%
-- **Living Expense Withdrawal:** {:.2f}% of total capital per year during retirement
-- **Capital Gains Tax Rate:** {:.2f}%
 - **Rules:** Uses current 401k withdrawal rules and RMD schedule
-- **Taxes:** Federal tax brackets are adjusted annually for inflation
+- **Federal Taxes:** Federal tax brackets are adjusted annually for inflation
+- **State Taxes:** Illinois law exempts “qualified retirement plan distributions” from state income tax
+
 """.format(inflation * 100, salary_growth * 100, CAGR * 100, withdrawal_pct * 100, cap_gains_rate * 100))
 
 
