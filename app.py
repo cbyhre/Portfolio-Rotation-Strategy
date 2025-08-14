@@ -205,15 +205,17 @@ st.pyplot(fig)
 comparison_df = pd.DataFrame({
     "Age": ages,
     "Conversion Total": best_balances,
-    "Conversion Withdrawal": best_withdrawals,
+    "Conversion Living Expense Withdrawal": best_withdrawals,
     "Non-Conversion Total": never_balances,
-    "Non-Conversion Withdrawal": never_withdrawals
+    "Non-Conversion Living Expense Withdrawal": never_withdrawals
 })
 
-# Format dollar columns for readability
-for col in ["With-Conversion Balance", "Living Expense Withdrawal", "Never-Convert Balance", "Living Expense Withdrawal"]:
+# Format columns
+for col in ["Conversion Total", "Conversion Living Expense Withdrawal",
+            "Non-Conversion Total", "Non-Conversion Living Expense Withdrawal"]:
     comparison_df[col] = comparison_df[col].apply(lambda x: f"${x:,.0f}")
 
 st.subheader("Yearly Comparison Table")
 st.dataframe(comparison_df)
+
 
