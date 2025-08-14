@@ -1,7 +1,16 @@
+import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
-import streamlit as st
+
+st.set_page_config(layout="wide", page_title="Roth Conversion Optimizer")
+
+# === User Inputs ===
+salary = st.number_input("Current Salary ($)", value=100000, step=1000)
+retirement_age = st.number_input("Retirement Age", value=65, step=1)
+start_age = st.number_input("Current Age", value=40, step=1)
+CAGR = st.number_input("Annual Investment CAGR (decimal)", value=0.1, step=0.01, format="%.2f")
+initial_capital = st.number_input("Initial 401k Capital ($)", value=1_000_000, step=10000)
 
 # === Fixed Parameters ===
 salary_growth = 0.03
@@ -9,7 +18,7 @@ end_age = 100
 inflation = 0.025
 cap_gains_rate = 0
 
-# === Extended RMD Table ===
+# === RMD Table ===
 Withdrawl_Minimums = pd.DataFrame({
     "Age": [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
             91, 92, 93, 94, 95, 96, 97, 98, 99, 100],
@@ -45,8 +54,8 @@ def future_tax_rate(income, year_offset):
             break
     return tax / income if income > 0 else 0
 
-# === Simulation Function ===
-def run_sim(start_age, retirement_age, salary, CAGR, initial_capital, conversion_age_start, annual_conversion, return_balances=False):
+# === Simulation ===
+def run_sim(conversion_age_start, annual_conversion, return_balances=False):
     ages = list(range(start_age, end_age + 1))
     capital_401k = initial_capital
     capital_roth = 0
@@ -55,14 +64,14 @@ def run_sim(start_age, retirement_age, salary, CAGR, initial_capital, conversion
     balances = []
 
     for age in ages:
-        if age < conversion_age_start:  # No conversions yet
+        if age < conversion_age_start:
             capital_401k *= (1 + CAGR)
             capital_roth *= (1 + CAGR)
             capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
             if start_age < age < retirement_age:
                 current_salary *= (1 + salary_growth)
 
-        elif age < 73:  # Conversion years
+        elif age < 73:
             taxable_income = (current_salary if age < retirement_age else 0) + annual_conversion
             conversion_amount = min(annual_conversion, capital_401k)
             tax_rate = future_tax_rate(taxable_income, age - start_age)
@@ -85,7 +94,7 @@ def run_sim(start_age, retirement_age, salary, CAGR, initial_capital, conversion
             if start_age < age < retirement_age:
                 current_salary *= (1 + salary_growth)
 
-        else:  # RMD phase
+        else:
             withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
             if not withdraw_pct.empty and capital_401k > 0:
                 withdrawal = capital_401k * (withdraw_pct.values[0] / 100)
@@ -106,8 +115,8 @@ def run_sim(start_age, retirement_age, salary, CAGR, initial_capital, conversion
     else:
         return capital_401k + capital_roth + capital_brokerage
 
-# === Never Convert Simulation ===
-def run_never(start_age, initial_capital, CAGR):
+# === Never Convert ===
+def run_never():
     ages = list(range(start_age, end_age + 1))
     capital_401k_nc = initial_capital
     capital_brokerage_nc = 0
@@ -129,50 +138,46 @@ def run_never(start_age, initial_capital, CAGR):
         balances_nc.append(capital_401k_nc + capital_brokerage_nc)
     return balances_nc
 
-# === Streamlit UI ===
-st.title("Optimal Roth Conversion Strategy")
+# === Grid Search ===
+results = []
+for conv_start in range(start_age, 73):
+    for conv_amount in range(0, 1_000_000, 10_000):
+        final_balance = run_sim(conv_start, conv_amount)
+        results.append((conv_start, conv_amount, final_balance))
 
-salary = st.number_input("Current Salary ($)", min_value=0, value=100000, step=1000)
-retirement_age = st.number_input("Retirement Age", min_value=40, max_value=80, value=65, step=1)
-start_age = st.number_input("Current Age", min_value=18, max_value=80, value=40, step=1)
-CAGR = st.number_input("Annual Growth Rate (CAGR)", min_value=0.0, max_value=1.0, value=0.1, step=0.01)
-initial_capital = st.number_input("Initial Capital in 401k ($)", min_value=0, value=1_000_000, step=10000)
+results_df = pd.DataFrame(results, columns=["Conversion Start Age", "Annual Conversion", "Final Balance"])
+results_df = results_df.sort_values(by="Final Balance", ascending=False).reset_index(drop=True)
 
-if st.button("Run Simulation"):
-    # Grid search for best combo
-    results = []
-    for conv_start in range(start_age, 73):
-        for conv_amount in range(0, int(initial_capital), 10000):
-            final_balance = run_sim(start_age, retirement_age, salary, CAGR, initial_capital, conv_start, conv_amount)
-            results.append((conv_start, conv_amount, final_balance))
+best_conv_start, best_conv_amount, best_final_balance = results_df.iloc[0]
 
-    results_df = pd.DataFrame(results, columns=["Conversion Start Age", "Annual Conversion", "Final Balance"])
-    results_df = results_df.sort_values(by="Final Balance", ascending=False).reset_index(drop=True)
+# === Balances for Plot ===
+ages = list(range(start_age, end_age + 1))
+best_balances = run_sim(best_conv_start, best_conv_amount, return_balances=True)
+never_balances = run_never()
+spread_pct = [(b - n) / n * 100 if n != 0 else 0 for b, n in zip(best_balances, never_balances)]
 
-    best_conv_start, best_conv_amount, best_final_balance = results_df.iloc[0]
-    st.success(f"Best Strategy: Start Age: {best_conv_start}, Annual Conversion: ${best_conv_amount:,}, Final Balance: ${best_final_balance:,.0f}")
+# === Display Results ===
+st.subheader("Optimal Strategy")
+st.markdown(f"**At age {best_conv_start}, start converting ${best_conv_amount:,.0f} per year into a Roth IRA.**")
+st.markdown(f"Final Balance (Best): **${best_final_balance:,.0f}**")
+st.markdown(f"Final Balance (Never Convert): **${never_balances[-1]:,.0f}**")
+st.markdown(f"Difference: **${best_final_balance - never_balances[-1]:,.0f} ({spread_pct[-1]:.2f}%)**")
 
-    ages = list(range(start_age, end_age + 1))
-    best_balances = run_sim(start_age, retirement_age, salary, CAGR, initial_capital, best_conv_start, best_conv_amount, return_balances=True)
-    never_balances = run_never(start_age, initial_capital, CAGR)
+# === Plot ===
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+ax1.plot(ages, best_balances, label=f"Best Conversion (Start {best_conv_start}, ${best_conv_amount:,}/yr)")
+ax1.plot(ages, never_balances, label="Never Convert")
+ax1.yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
+ax1.set_ylabel("Total Capital ($)")
+ax1.legend()
+ax1.grid(True)
 
-    spread_pct = [(b - n) / n * 100 if n != 0 else 0 for b, n in zip(best_balances, never_balances)]
+ax2.plot(ages, spread_pct, color="green", label="Spread % (Best vs Never)")
+ax2.axhline(0, color="black", linewidth=1, linestyle="--")
+ax2.yaxis.set_major_formatter(mtick.PercentFormatter())
+ax2.set_xlabel("Age")
+ax2.set_ylabel("Spread (%)")
+ax2.legend()
+ax2.grid(True)
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
-    ax1.plot(ages, best_balances, label=f"Best Conversion (Start {best_conv_start}, ${best_conv_amount:,}/yr)")
-    ax1.plot(ages, never_balances, label="Never Convert")
-    ax1.yaxis.set_major_formatter(mtick.StrMethodFormatter('${x:,.0f}'))
-    ax1.set_ylabel("Total Capital ($)")
-    ax1.set_title(f"Optimal Roth Conversions vs Never Converting")
-    ax1.legend()
-    ax1.grid(True)
-
-    ax2.plot(ages, spread_pct, color="green", label="Spread % (Best vs Never)")
-    ax2.axhline(0, color="black", linewidth=1, linestyle="--")
-    ax2.yaxis.set_major_formatter(mtick.PercentFormatter())
-    ax2.set_xlabel("Age")
-    ax2.set_ylabel("Spread (%)")
-    ax2.legend()
-    ax2.grid(True)
-
-    st.pyplot(fig)
+st.pyplot(fig)
