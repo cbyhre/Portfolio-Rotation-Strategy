@@ -19,8 +19,8 @@ employer_match_pct = st.number_input("Employer Match (% of salary)", value=5.0, 
 salary_growth = 0.03
 end_age = 100
 inflation = 0.025
-cap_gains_rate = 0  # Illinois has no state tax on conversions/distributions
-IRS_401k_limit_start = 23500  # Starting IRS contribution limit
+cap_gains_rate = 0
+IRS_401k_limit_start = 23500
 
 # === Assumptions Box ===
 st.markdown(f"""
@@ -74,29 +74,22 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
     capital_roth = 0
     capital_brokerage = 0
     current_salary = salary
-    balances = []
-    withdrawals = []
-    employee_contribs = []
+    balances, withdrawals, employee_contribs = [], [], []
 
     for age in ages:
-        # Contributions before growth if still working
+        # 1. Contributions
         if age < retirement_age:
-            # IRS contribution limit adjusted for inflation
             years_since_start = age - start_age
             contribution_limit = IRS_401k_limit_start * (1 + inflation) ** years_since_start
-            # Employee contribution capped by IRS limit
-            raw_employee_contribution = current_salary * annual_contribution_pct
-            employee_contribution = min(raw_employee_contribution, contribution_limit)
-            # Employer match (not capped)
+            employee_contribution = min(current_salary * annual_contribution_pct, contribution_limit)
             employer_match = current_salary * employer_match_pct
-            # Add to 401k
             capital_401k += employee_contribution + employer_match
         else:
             employee_contribution = 0
         employee_contribs.append(employee_contribution)
 
-        # Living expenses withdrawal during retirement
-        if age >= retirement_age:
+        # 2. Withdrawals for living expenses
+        if age >= retirement_age and withdrawal_pct > 0:
             total_capital = capital_401k + capital_roth + capital_brokerage
             living_expense = total_capital * withdrawal_pct
             if capital_brokerage >= living_expense:
@@ -115,17 +108,10 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
         else:
             withdrawals.append(0)
 
-        # Conversion logic
-        if age < conversion_age_start:
-            capital_401k *= (1 + CAGR)
-            capital_roth *= (1 + CAGR)
-            capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
-            if age < retirement_age:
-                current_salary *= (1 + salary_growth)
-        elif age < 73:
-            taxable_income = (current_salary if age < retirement_age else 0) - employee_contribution + annual_conversion
+        # 3. Conversions
+        if conversion_age_start <= age < 73 and annual_conversion > 0:
             conversion_amount = min(annual_conversion, capital_401k)
-            tax_rate = future_tax_rate(taxable_income, age - start_age)
+            tax_rate = future_tax_rate(conversion_amount, age - start_age)
             tax_due = conversion_amount * tax_rate
             capital_401k -= conversion_amount
             capital_roth += conversion_amount
@@ -135,22 +121,24 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
                 remaining_tax = tax_due - capital_brokerage
                 capital_brokerage = 0
                 capital_401k -= remaining_tax
-            capital_401k *= (1 + CAGR)
-            capital_roth *= (1 + CAGR)
-            capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
-            if age < retirement_age:
-                current_salary *= (1 + salary_growth)
-        else:
-            withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
-            if not withdraw_pct.empty and capital_401k > 0:
-                withdrawal = capital_401k * (withdraw_pct.values[0] / 100)
-                tax_rate = future_tax_rate(withdrawal, age - start_age)
-                after_tax_withdrawal = withdrawal * (1 - tax_rate)
-                capital_401k -= withdrawal
-                capital_brokerage += after_tax_withdrawal
-            capital_401k *= (1 + CAGR)
-            capital_roth *= (1 + CAGR)
-            capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
+
+        # 4. RMDs
+        withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
+        if not withdraw_pct.empty and capital_401k > 0:
+            rmd_withdrawal = capital_401k * (withdraw_pct.values[0] / 100)
+            tax_rate = future_tax_rate(rmd_withdrawal, age - start_age)
+            after_tax = rmd_withdrawal * (1 - tax_rate)
+            capital_401k -= rmd_withdrawal
+            capital_brokerage += after_tax
+
+        # 5. Growth
+        capital_401k *= (1 + CAGR)
+        capital_roth *= (1 + CAGR)
+        capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
+
+        # 6. Salary growth
+        if age < retirement_age:
+            current_salary *= (1 + salary_growth)
 
         if return_balances:
             balances.append(capital_401k + capital_roth + capital_brokerage)
@@ -160,58 +148,58 @@ def run_sim(conversion_age_start, annual_conversion, return_balances=False):
 # === Never Convert ===
 def run_never():
     ages = list(range(start_age, end_age + 1))
-    capital_401k_nc = initial_capital
-    capital_brokerage_nc = 0
+    capital_401k = initial_capital
+    capital_brokerage = 0
     current_salary = salary
-    balances_nc = []
-    withdrawals_nc = []
-    employee_contribs_nc = []
+    balances, withdrawals, employee_contribs = [], [], []
 
     for age in ages:
+        # 1. Contributions
         if age < retirement_age:
             years_since_start = age - start_age
             contribution_limit = IRS_401k_limit_start * (1 + inflation) ** years_since_start
-            raw_employee_contribution = current_salary * annual_contribution_pct
-            employee_contribution = min(raw_employee_contribution, contribution_limit)
+            employee_contribution = min(current_salary * annual_contribution_pct, contribution_limit)
             employer_match = current_salary * employer_match_pct
-            capital_401k_nc += employee_contribution + employer_match
+            capital_401k += employee_contribution + employer_match
         else:
             employee_contribution = 0
-        employee_contribs_nc.append(employee_contribution)
+        employee_contribs.append(employee_contribution)
 
-        if age >= retirement_age:
-            total_capital = capital_401k_nc + capital_brokerage_nc
+        # 2. Withdrawals for living expenses
+        if age >= retirement_age and withdrawal_pct > 0:
+            total_capital = capital_401k + capital_brokerage
             living_expense = total_capital * withdrawal_pct
-            if capital_brokerage_nc >= living_expense:
-                capital_brokerage_nc -= living_expense
+            if capital_brokerage >= living_expense:
+                capital_brokerage -= living_expense
             else:
-                from_401k = living_expense - capital_brokerage_nc
-                capital_brokerage_nc = 0
+                from_401k = living_expense - capital_brokerage
+                capital_brokerage = 0
                 tax_rate = future_tax_rate(from_401k, age - start_age)
-                capital_401k_nc -= from_401k / (1 - tax_rate)
-            withdrawals_nc.append(living_expense)
+                capital_401k -= from_401k / (1 - tax_rate)
+            withdrawals.append(living_expense)
         else:
-            withdrawals_nc.append(0)
+            withdrawals.append(0)
 
-        if age < 73:
-            capital_401k_nc *= (1 + CAGR)
-            capital_brokerage_nc *= (1 + CAGR * (1 - cap_gains_rate))
-            if age < retirement_age:
-                current_salary *= (1 + salary_growth)
-        else:
-            withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
-            if not withdraw_pct.empty and capital_401k_nc > 0:
-                withdrawal = capital_401k_nc * (withdraw_pct.values[0] / 100)
-                tax_rate = future_tax_rate(withdrawal, age - start_age)
-                after_tax_withdrawal = withdrawal * (1 - tax_rate)
-                capital_401k_nc -= withdrawal
-                capital_brokerage_nc += after_tax_withdrawal
-            capital_401k_nc *= (1 + CAGR)
-            capital_brokerage_nc *= (1 + CAGR * (1 - cap_gains_rate))
+        # 4. RMDs
+        withdraw_pct = Withdrawl_Minimums.loc[Withdrawl_Minimums['Age'] == age, "% of Account You Must Withdraw"]
+        if not withdraw_pct.empty and capital_401k > 0:
+            rmd_withdrawal = capital_401k * (withdraw_pct.values[0] / 100)
+            tax_rate = future_tax_rate(rmd_withdrawal, age - start_age)
+            after_tax = rmd_withdrawal * (1 - tax_rate)
+            capital_401k -= rmd_withdrawal
+            capital_brokerage += after_tax
 
-        balances_nc.append(capital_401k_nc + capital_brokerage_nc)
+        # 5. Growth
+        capital_401k *= (1 + CAGR)
+        capital_brokerage *= (1 + CAGR * (1 - cap_gains_rate))
 
-    return balances_nc, withdrawals_nc, employee_contribs_nc
+        # 6. Salary growth
+        if age < retirement_age:
+            current_salary *= (1 + salary_growth)
+
+        balances.append(capital_401k + capital_brokerage)
+
+    return balances, withdrawals, employee_contribs
 
 # === Grid Search ===
 results = []
